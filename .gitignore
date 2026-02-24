@@ -1,0 +1,7 @@
+/data
+__pycache__/
+*.parquet
+*.fits
+*.hdf5
+*.csv
+/results/
