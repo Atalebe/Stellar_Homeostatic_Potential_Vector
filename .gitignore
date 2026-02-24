@@ -5,3 +5,10 @@ __pycache__/
 *.hdf5
 *.csv
 /results/
+/data
+__pycache__/
+*.parquet
+*.fits
+*.hdf5
+*.csv
+/results/
