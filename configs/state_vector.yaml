@@ -1,0 +1,164 @@
+paths:
+  in_parquet: "/mnt/g/STAR_HPV/raw/gaia_dr3/gaia_rotmod_join.parquet"
+  out_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector.parquet"
+  out_summary: "/mnt/g/STAR_HPV/results/state_vectors/summary.yaml"
+
+filters:
+  # basic quality
+  ruwe_max: 1.4
+  poe_min: 10
+  teff_min: 3200
+  teff_max: 7500
+  # avoid garbage
+  prot_min_days: 0.1
+  prot_max_days: 200.0
+
+class_gating:
+  # if logg exists, use it, otherwise fall back to "unknown"
+  dwarf_logg_min: 4.0
+  giant_logg_max: 3.5
+
+bins:
+  # Teff bins for dwarfs, edit as you like
+  teff_edges: [3200, 4000, 5200, 6000, 7500]
+
+weights:
+  wR: 1.0
+  wH: 1.0
+  wM: 1.0
+  wS: 1.0
+
+window:
+  # quantile window within each class
+  q_lo: 0.40
+  q_hi: 0.60
+gate:
+  in_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector.parquet"
+  out_dir: "/mnt/g/STAR_HPV/results/gate"
+
+  only_dwarfs: true
+  min_rows_per_bin: 2000
+
+  # Plot limits (to avoid insane tails)
+  prot_log10_min: -1.0    # 0.1 days
+  prot_log10_max:  2.3    # ~200 days
+
+  arot_qclip_lo: 0.01
+  arot_qclip_hi: 0.99
+
+  # Binning for median trend lines
+  nbins_logprot: 30
+nulls:
+  in_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector.parquet"
+  out_dir: "/mnt/g/STAR_HPV/results/nulls"
+
+  only_dwarfs: true
+  teff_bins: ["3200-4000", "4000-5200", "5200-6000", "6000-7500"]
+
+  nbins_logprot: 30
+  min_bin_count: 200     # per x-bin for median line
+
+  clip_qlo: 0.01
+  clip_qhi: 0.99
+
+  n_iter: 200
+  seed: 123
+state_vector_v2:
+  in_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector.parquet"
+  gate_yaml: "/mnt/g/STAR_HPV/results/nulls/null_metrics.yaml"
+
+  out_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector_gateaware_v2.parquet"
+  out_summary: "/mnt/g/STAR_HPV/results/state_vectors/summary_gateaware_v2.yaml"
+
+  # Keep the same window idea for now, but computed on the new Phi
+  window:
+    q_lo: 0.40
+    q_hi: 0.60
+
+  # Optional: require post-gate membership before windowing (Reviewer 2's "strictly post-gate" test)
+  require_post_gate: true
+  state_vector_v2:
+  weights_v2:
+    wR: 3.0
+    wH: 0.5
+    wM: 0.5
+    wS: 1.0
+weight_sweep:
+  in_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector_gateaware_v2.parquet"
+  out_dir: "/mnt/g/STAR_HPV/results/weight_sweep"
+
+  # Use these bins (dwarfs only)
+  only_dwarfs: true
+  teff_bins: ["3200-4000", "4000-5200", "5200-6000", "6000-7500"]
+
+  # Window quantiles (same logic)
+  q_lo: 0.40
+  q_hi: 0.60
+
+  # Minimum counts to report a bin
+  min_rows_bin: 800
+  min_rows_each_group: 100
+
+  # Weight grid
+  wR_grid: [1.0, 2.0, 3.0, 5.0, 8.0]
+  wH_grid: [0.0, 0.5, 1.0]
+  wM_grid: [0.0, 0.5, 1.0]
+  wS_grid: [0.0, 0.5, 1.0]
+
+  seed: 123
+absH_v2:
+  in_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector_gateaware_v2.parquet"
+  out_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector_gateaware_v2_absH.parquet"
+  out_summary: "/mnt/g/STAR_HPV/results/state_vectors/summary_gateaware_v2_absH.yaml"
+
+  # If your parallax cut is already strong, you can keep this loose
+  parallax_mas_min: 0.2
+
+  # Weights for Phi using absolute-H (start with reviewer-favored)
+  weights:
+    wR: 1.0
+    wH: 1.0
+    wM: 0.0
+    wS: 0.0
+
+  window:
+    q_lo: 0.40
+    q_hi: 0.60
+
+
+quantile_grid_sweep:
+  in_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector_gateaware_v2.parquet"
+  out_dir: "/mnt/g/STAR_HPV/results/quantile_grid_sweep"
+
+  only_dwarfs: true
+  teff_bins: ["3200-4000", "4000-5200", "5200-6000", "6000-7500"]
+
+  # Quantile windows to test (Null 3 variant)
+  windows:
+    - {q_lo: 0.35, q_hi: 0.65}
+    - {q_lo: 0.40, q_hi: 0.60}
+    - {q_lo: 0.45, q_hi: 0.55}
+
+  # Minimum counts
+  min_rows_bin: 800
+  min_rows_each_group: 100
+
+  # Weight grids (keep it modest)
+  wR_grid: [1.0, 2.0, 3.0, 5.0, 8.0]
+  wH_grid: [0.0, 0.5, 1.0]
+  wM_grid: [0.0, 0.5, 1.0]
+  wS_grid: [0.0, 0.5, 1.0]
+absH_v2:
+  in_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector_gateaware_v2.parquet"
+  aux_parquet_v1: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector.parquet"
+  out_parquet: "/mnt/g/STAR_HPV/processed/state_vectors/gaia_shv_state_vector_gateaware_v2_absH.parquet"
+  out_summary: "/mnt/g/STAR_HPV/results/state_vectors/summary_gateaware_v2_absH.yaml"
+  parallax_mas_min: 0.2
+  weights:
+    wR: 1.0
+    wH: 1.0
+    wM: 0.0
+    wS: 0.0
+  window:
+    q_lo: 0.40
+    q_hi: 0.60

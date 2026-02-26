@@ -1,0 +1,18 @@
+gaia:
+  tap_url: "https://gaia.aip.de/tap"
+  language: "PostgreSQL"
+  out_parquet: "/mnt/g/STAR_HPV/raw/gaia_dr3/gaia_rotmod_kepler_field.parquet"
+
+  region:
+    ra_min: 279.0
+    ra_max: 302.5
+    dec_min: 36.0
+    dec_max: 52.6
+
+  selection:
+    ruwe_max: 1.4
+    teff_min: 3200
+    teff_max: 7500
+
+    # Relax this. Start with 2.0 to get overlap.
+    parallax_over_error_min: 2.0

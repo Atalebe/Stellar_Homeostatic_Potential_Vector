@@ -1,0 +1,5 @@
+tap_url: "https://gaia.aip.de/tap"
+language: "PostgreSQL"
+ids_csv: "/mnt/g/STAR_HPV/interim/kepler/kepler_gaia_ids.csv"
+out_dir: "/mnt/g/STAR_HPV/raw/gaia_dr3/kepler_ids_parts"
+chunk_size: 1500

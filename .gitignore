@@ -4,11 +4,39 @@ __pycache__/
 *.fits
 *.hdf5
 *.csv
-/results/
-/data
+# Python
 __pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.venv/
+.conda/
+.env
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Large data products (DO NOT COMMIT)
+raw/
+processed/
+results/
+logs/
+data/
+downloads/
 *.parquet
-*.fits
 *.hdf5
-*.csv
-/results/
+*.fits
+*.csv.gz
+*.feather
+*.pkl
+*.npy
+*.npz
+
+# If you DO want to version control paper figures, put them under paper/figures/
+# and keep results/figures ignored.
+.env

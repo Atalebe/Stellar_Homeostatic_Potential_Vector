@@ -1,0 +1,17 @@
+gaia:
+  tap_url: "https://gaia.aip.de/tap"
+  language: "PostgreSQL"
+
+  out_dir: "/mnt/g/STAR_HPV/raw/gaia_dr3/parts"
+  out_merged: "/mnt/g/STAR_HPV/raw/gaia_dr3/gaia_rotmod_join.parquet"
+
+  partition:
+    nparts: 20
+    start: 16
+    stop: 19
+
+  selection:
+    ruwe_max: 1.4
+    teff_min: 3200
+    teff_max: 7500
+    parallax_over_error_min: 10

@@ -1,0 +1,11 @@
+project:
+  repo_root: "${HOME}/Stellar_Homeostatic_Potential_Vector"
+  data_root: "/mnt/g/STAR_HPV"
+
+paths:
+  raw:      "/mnt/g/STAR_HPV/raw"
+  cache:    "/mnt/g/STAR_HPV/cache"
+  interim:  "/mnt/g/STAR_HPV/interim"
+  processed:"/mnt/g/STAR_HPV/processed"
+  results:  "/mnt/g/STAR_HPV/results"
+  logs:     "/mnt/g/STAR_HPV/logs"
