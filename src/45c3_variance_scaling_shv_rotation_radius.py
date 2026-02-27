@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""
+src/45c3_variance_scaling_shv_rotation_radius.py
+
+Rotation-scale coarse graining using a *radius in logP* (not a window-size heuristic).
+
+For each teff_bin_s:
+  - sort by x = log10(P_rot)
+  - for each star i, define neighborhood: |x_j - x_i| <= h
+  - compute Phi_hat_h(i) = median(Phi_gmm in neighborhood)
+  - residual r_h = Phi_gmm - Phi_hat_h
+  - summarize Var(r_h), MAD^2(r_h), and effective neighborhood sizes
+
+Null:
+  - permute Phi_gmm within teff_bin_s, then recompute the same.
+
+Outputs:
+  /mnt/g/STAR_HPV/results/variance_scaling/variance_scaling_rotation_radius.csv
+  /mnt/g/STAR_HPV/results/variance_scaling/variance_scaling_rotation_radius.yaml
+  /mnt/g/STAR_HPV/results/figures/variance_scaling_rotation_radius/*.png
+  /mnt/g/STAR_HPV/results/figures/variance_scaling_rotation_radius/figures_variance_scaling_rotation_radius.tex
+"""
+
+from __future__ import annotations
+
+import os
+import argparse
+from dataclasses import dataclass
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import yaml
+
+
+def ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def safe_var(x: np.ndarray) -> float:
+    x = x[np.isfinite(x)]
+    if x.size < 2:
+        return np.nan
+    return float(np.var(x, ddof=1))
+
+
+def mad(x: np.ndarray) -> float:
+    x = x[np.isfinite(x)]
+    if x.size == 0:
+        return np.nan
+    m = np.median(x)
+    return float(np.median(np.abs(x - m)))
+
+
+def mad2(x: np.ndarray) -> float:
+    m = mad(x)
+    return float(m * m) if np.isfinite(m) else np.nan
+
+
+def radius_median_smoother(x: np.ndarray, y: np.ndarray, h: float, min_neigh: int = 21):
+    """
+    x must be sorted ascending. Uses two pointers to maintain neighborhood indices.
+    Returns:
+      yhat: median within radius h for each i
+      neigh_sizes: neighborhood sizes used
+    """
+    n = len(x)
+    yhat = np.full(n, np.nan, dtype=float)
+    neigh_sizes = np.zeros(n, dtype=int)
+
+    L = 0
+    R = 0
+    for i in range(n):
+        xi = x[i]
+
+        while R < n and x[R] <= xi + h:
+            R += 1
+        while L < n and x[L] < xi - h:
+            L += 1
+
+        yy = y[L:R]
+        yy = yy[np.isfinite(yy)]
+        if yy.size >= min_neigh:
+            yhat[i] = np.median(yy)
+            neigh_sizes[i] = int(yy.size)
+        else:
+            # fallback: nearest-k window around i (in index space)
+            k = min_neigh
+            lo = max(0, i - k // 2)
+            hi = min(n, lo + k)
+            lo = max(0, hi - k)
+            yy2 = y[lo:hi]
+            yy2 = yy2[np.isfinite(yy2)]
+            if yy2.size:
+                yhat[i] = np.median(yy2)
+                neigh_sizes[i] = int(yy2.size)
+            else:
+                yhat[i] = np.nan
+                neigh_sizes[i] = 0
+
+    return yhat, neigh_sizes
+
+
+@dataclass
+class RotRadiusResult:
+    teff_bin_s: str
+    h_logp: float
+    n: int
+    var_resid: float
+    mad2_resid: float
+    neigh_med: float
+    neigh_p10: float
+    neigh_p90: float
+
+
+def compute_one_variant(
+    df: pd.DataFrame,
+    teff_col: str,
+    logp_col: str,
+    phi_col: str,
+    h_list: List[float],
+    min_n: int,
+    min_neigh: int,
+) -> List[RotRadiusResult]:
+    out: List[RotRadiusResult] = []
+
+    # Safety: if duplicate columns exist, keep the last occurrence
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated(keep="last")].copy()
+
+    for teff, g in df.groupby(teff_col):
+        g = g[[logp_col, phi_col]].dropna()
+        if g.shape[0] < min_n:
+            continue
+
+        g = g.sort_values(logp_col)
+        x = g[logp_col].to_numpy(dtype=float)
+        y = g[phi_col].to_numpy(dtype=float)
+
+        # Guard against accidental 2D y (should not happen after dedup, but just in case)
+        if y.ndim != 1:
+            raise ValueError(f"phi column '{phi_col}' became {y.ndim}D with shape {y.shape}. Check duplicate columns.")
+
+        for h in h_list:
+            yhat, ns = radius_median_smoother(x, y, h=h, min_neigh=min_neigh)
+            r = y - yhat
+            out.append(
+                RotRadiusResult(
+                    teff_bin_s=str(teff),
+                    h_logp=float(h),
+                    n=int(np.sum(np.isfinite(r))),
+                    var_resid=safe_var(r),
+                    mad2_resid=mad2(r),
+                    neigh_med=float(np.median(ns)),
+                    neigh_p10=float(np.percentile(ns, 10)),
+                    neigh_p90=float(np.percentile(ns, 90)),
+                )
+            )
+
+    return out
+
+
+def pooled_curve(df_res: pd.DataFrame, ycol: str) -> pd.DataFrame:
+    return (
+        df_res.groupby("h_logp")
+        .agg(y=(ycol, "mean"))
+        .reset_index()
+        .sort_values("h_logp")
+    )
+
+
+def write_tex_snippet(tex_path: str, fig_paths: Dict[str, str]) -> None:
+    lines = []
+    lines.append(r"% Auto-generated by src/45c3_variance_scaling_shv_rotation_radius.py")
+    for key, path in fig_paths.items():
+        lines.append(r"\begin{figure}[t]")
+        lines.append(r"  \centering")
+        lines.append(rf"  \includegraphics[width=0.92\linewidth]{{{path}}}")
+        lines.append(rf"  \caption{{{key.replace('_',' ')}.}}")
+        lines.append(rf"  \label{{fig:variance_scaling_rotation_radius:{key}}}")
+        lines.append(r"\end{figure}")
+        lines.append("")
+    with open(tex_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines).strip() + "\n")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", default="/mnt/g/STAR_HPV/processed/gyro/kepler_gmmgate_with_gyro_ages_mamajek.parquet")
+    ap.add_argument("--outdir", default="/mnt/g/STAR_HPV/results/variance_scaling")
+    ap.add_argument("--figdir", default="/mnt/g/STAR_HPV/results/figures/variance_scaling_rotation_radius")
+    ap.add_argument("--teff-col", default="teff_bin_s")
+    ap.add_argument("--prot-col", default="prot_days")
+    ap.add_argument("--phi-col", default="Phi_gmm")
+    ap.add_argument("--h-list", default="0.05,0.10,0.20,0.30,0.50")
+    ap.add_argument("--min-n", type=int, default=200)
+    ap.add_argument("--min-neigh", type=int, default=21)
+    ap.add_argument("--seed", type=int, default=123)
+    args = ap.parse_args()
+
+    ensure_dir(args.outdir)
+    ensure_dir(args.figdir)
+
+    h_list = [float(x.strip()) for x in args.h_list.split(",") if x.strip()]
+    rng = np.random.default_rng(args.seed)
+
+    df = pd.read_parquet(args.input).copy()
+
+    prot_col = args.prot_col
+    if prot_col not in df.columns:
+        if "gate_days_gmm" in df.columns:
+            prot_col = "gate_days_gmm"
+        else:
+            raise SystemExit(f"prot column '{args.prot_col}' not found and gate_days_gmm not found.")
+
+    need = [args.teff_col, prot_col, args.phi_col]
+    miss = [c for c in need if c not in df.columns]
+    if miss:
+        raise SystemExit(f"Missing columns: {miss}")
+
+    df = df.dropna(subset=[args.teff_col, prot_col, args.phi_col]).copy()
+    df["logP"] = np.log10(df[prot_col].to_numpy(dtype=float))
+
+    # observed
+    obs = compute_one_variant(
+        df=df[[args.teff_col, "logP", args.phi_col]].copy(),
+        teff_col=args.teff_col,
+        logp_col="logP",
+        phi_col=args.phi_col,
+        h_list=h_list,
+        min_n=args.min_n,
+        min_neigh=args.min_neigh,
+    )
+    obs_df = pd.DataFrame([r.__dict__ for r in obs])
+    obs_df["variant"] = "observed"
+
+    # null: create a clean frame and DO NOT keep the original phi column after permutation
+    df_null = df[[args.teff_col, "logP", args.phi_col]].copy()
+
+    def permute_within_group(s: pd.Series) -> pd.Series:
+        arr = s.to_numpy()
+        return pd.Series(rng.permutation(arr), index=s.index)
+
+    df_null["Phi_perm"] = df_null.groupby(args.teff_col)[args.phi_col].transform(permute_within_group)
+
+    # Drop original phi to avoid duplicate column name after rename
+    df_null = df_null.drop(columns=[args.phi_col])
+    df_null = df_null.rename(columns={"Phi_perm": args.phi_col})
+
+    null = compute_one_variant(
+        df=df_null,
+        teff_col=args.teff_col,
+        logp_col="logP",
+        phi_col=args.phi_col,
+        h_list=h_list,
+        min_n=args.min_n,
+        min_neigh=args.min_neigh,
+    )
+    null_df = pd.DataFrame([r.__dict__ for r in null])
+    null_df["variant"] = "permute_phi_within_teff"
+
+    out = pd.concat([obs_df, null_df], ignore_index=True)
+
+    out_csv = os.path.join(args.outdir, "variance_scaling_rotation_radius.csv")
+    out_yaml = os.path.join(args.outdir, "variance_scaling_rotation_radius.yaml")
+    out.to_csv(out_csv, index=False)
+
+    meta = {
+        "input": args.input,
+        "prot_col_used": prot_col,
+        "h_list": h_list,
+        "min_n": args.min_n,
+        "min_neigh": args.min_neigh,
+        "seed": args.seed,
+        "n_rows_loaded": int(len(df)),
+        "outputs": {"csv": out_csv},
+        "figdir": args.figdir,
+    }
+    with open(out_yaml, "w", encoding="utf-8") as f:
+        yaml.safe_dump(meta, f, sort_keys=False)
+
+    # pooled figures
+    fig_paths: Dict[str, str] = {}
+    for ycol in ["var_resid", "mad2_resid"]:
+        p_obs = pooled_curve(out[out["variant"] == "observed"], ycol=ycol)
+        p_null = pooled_curve(out[out["variant"] == "permute_phi_within_teff"], ycol=ycol)
+
+        plt.figure()
+        plt.plot(p_obs["h_logp"], p_obs["y"], marker="o", linestyle="-", label="observed (pooled)")
+        plt.plot(p_null["h_logp"], p_null["y"], marker="s", linestyle="--", label="null (pooled)")
+        plt.xlabel("radius bandwidth h in log10(P_rot)")
+        plt.ylabel(ycol)
+        plt.title(f"Rotation-radius coarse graining: {ycol} vs h")
+        plt.legend(fontsize=9)
+        plt.tight_layout()
+        out_png = os.path.join(args.figdir, f"pooled_rotation_radius_{ycol}.png")
+        plt.savefig(out_png, dpi=200)
+        plt.close()
+        fig_paths[f"pooled_rotation_radius_{ycol}"] = out_png
+
+    tex_path = os.path.join(args.figdir, "figures_variance_scaling_rotation_radius.tex")
+    write_tex_snippet(tex_path, fig_paths)
+
+    print(f"[OK] wrote {out_csv}")
+    print(f"[OK] wrote {out_yaml}")
+    print(f"[OK] wrote figures to {args.figdir}")
+    print(f"[OK] wrote TeX snippet {tex_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
